@@ -1,0 +1,62 @@
+---
+- name: Fail if project and namespace exist
+  hosts: utility
+  gather_facts: false
+
+  module_defaults:
+    group/kubernetes.core.k8s:
+      host: "{{ ocp_cluster['host'] }}"
+      kubeconfig: "{{ ocp_cluster['kubeconfig'] }}"
+      validate_certs: "{{ ocp_cluster['validate_certs'] }}"
+
+  tasks:
+
+    - name: Project
+      block:
+
+        - name: "Check if project exist: '{{ target_namespace }}'"
+          kubernetes.core.k8s_info:
+            api_version: project.openshift.io/v1
+            kind: Project
+            name: "{{ target_namespace }}"
+            wait: false
+          register: project_resource
+
+        - name: Print resources
+          ansible.builtin.debug:
+            msg: >-
+              {{ project_resource['resources'][0]['kind'] | default(None) }}:
+              {{ project_resource['resources'][0]['metadata']['name'] | default(None) }}
+          when:
+            - project_resource['resources'] | length > 0
+
+    - name: Namespace
+      block:
+
+        - name: "Check if namespace exist: '{{ target_namespace }}'"
+          kubernetes.core.k8s_info:
+            api_version: v1
+            kind: Namespace
+            name: "{{ target_namespace }}"
+            wait: false
+          register: namespace_resource
+
+        - name: Print resources
+          ansible.builtin.debug:
+            msg: >-
+              {{ namespace_resource['resources'][0]['kind'] | default(None) }}:
+              {{ namespace_resource['resources'][0]['metadata']['name'] | default(None) }}
+          when:
+            - namespace_resource['resources'] | length > 0
+
+    - name: Check
+      block:
+
+        - name: Fail if project or namespace exist
+          ansible.builtin.fail:
+            msg: >-
+              Namespace '{{ target_namespace }}' exists.
+              Re-create your classroom environment before you start the comprehensive review, to prevent any impact from your previous work.
+          when:
+            - project_resource['resources'] | length > 0
+            - namespace_resource['resources'] | length > 0

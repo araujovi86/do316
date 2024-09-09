@@ -1,0 +1,131 @@
+---
+# NOTE: This playbook requires that the following playbooks run BEFORE via the lab script
+# - playbooks/deploy-virtctl.yml
+
+- name: The project and a data volume for the VM
+  hosts: utility
+  gather_facts: false
+
+  module_defaults:
+    group/kubernetes.core.k8s:
+      host: "{{ ocp_cluster['host'] }}"
+      kubeconfig: "{{ ocp_cluster['kubeconfig'] }}"
+      validate_certs: "{{ ocp_cluster['validate_certs'] }}"
+
+  vars:
+    dv_namespace: vm-images
+    dv_name: web-server-image
+    vm_namespace: template-intro
+    dv_qcow2: rhel9-helloworld.qcow2
+    dv_size: 10Gi
+
+  tasks:
+    - name: Ensure that the project exists
+      kubernetes.core.k8s:
+        state: present
+        inline:
+          apiVersion: project.openshift.io/v1
+          kind: Project
+          metadata:
+            name: "{{ item }}"
+      loop:
+        - "{{ dv_namespace }}"
+        - "{{ vm_namespace }}"
+
+    - name: Create data volume for exercise
+      kubernetes.core.k8s:
+        state: present
+        inline:
+          apiVersion: cdi.kubevirt.io/v1beta1
+          kind: DataVolume
+          metadata:
+            name: "{{ dv_name }}"
+            namespace: "{{ dv_namespace }}"
+          spec:
+            source:
+              http:
+                url: "{{ utility_url }}{{ dv_qcow2 }}"
+            pvc:
+              accessModes:
+                - ReadWriteMany
+              volumeMode: "{{ dv_sc_mode }}"
+              resources:
+                requests:
+                  storage: "{{ dv_size }}"
+              storageClassName: "{{ dv_sc_name }}"
+            preallocation: true
+        wait: true
+        wait_condition:
+          type: Ready
+          status: "True"
+        wait_sleep: "{{ wait_sleep }}"
+        wait_timeout: "{{ wait_timeout }}"
+
+    - name: Create RBAC to allow DataVolume clone
+      kubernetes.core.k8s:
+        state: present
+        definition: "{{ resources }}"
+      register: rbac_clone
+      vars:
+        resources: "{{ lookup('ansible.builtin.file', item) | from_yaml_all }}"
+      loop:
+        - 'rbac-allow-clone.yaml'
+
+    # # - name: Create role to for cloning between projects
+    # #   kubernetes.core.k8s:
+    # #     state: present
+    # #     inline:
+    # #       apiVersion: rbac.authorization.k8s.io/v1
+    # #       kind: ClusterRole
+    # #       metadata:
+    # #         name: datavolume-cloner
+    # #       rules:
+    # #         - apiGroups:
+    # #             - "cdi.kubevirt.io"
+    # #           resources:
+    # #             - "datavolumes/source"
+    # #           verbs:
+    # #             - "*"
+
+    # - name: Create cluster role "{{ cluster_role_name }}"
+    #   kubernetes.core.k8s:
+    #     state: present
+    #     definition: "{{ lookup('ansible.builtin.template', 'clusterrole.j2') | from_yaml }}"
+    #   vars:
+    #     cluster_role_name: datavolume-cloner
+    #     rules:
+    #       - apiGroups:
+    #           - "cdi.kubevirt.io"
+    #         resources:
+    #           - "datavolumes/source"
+    #         verbs:
+    #           - "*"
+
+    # # - name: Create rolebinding to enable cloning
+    # #   kubernetes.core.k8s:
+    # #     state: present
+    # #     inline:
+    # #       apiVersion: rbac.authorization.k8s.io/v1
+    # #       kind: RoleBinding
+    # #       metadata:
+    # #         name: allow-clone-to-user
+    # #         namespace: "{{ dv_namespace }}"
+    # #       roleRef:
+    # #         kind: ClusterRole
+    # #         name: datavolume-cloner
+    # #         apiGroup: rbac.authorization.k8s.io
+    # #       subjects:
+    # #         - kind: ServiceAccount
+    # #           name: default
+    # #           namespace: "{{ vm_namespace }}"
+
+    # - name: Create role binding "{{ role_binding_name }}"
+    #   kubernetes.core.k8s:
+    #     state: present
+    #     definition: "{{ lookup('ansible.builtin.template', 'rolebinding.j2') | from_yaml }}"
+    #   vars:
+    #     role_binding_name: allow-clone-to-user
+    #     target_namespace: "{{ dv_namespace }}"
+    #     cluster_role: datavolume-cloner
+    #     namespaces: "{{ vm_namespace }}"
+    #     service_account: default

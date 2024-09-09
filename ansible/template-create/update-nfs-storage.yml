@@ -1,0 +1,91 @@
+---
+- name: Configure NFS storage profile
+  hosts: utility
+  gather_facts: false
+
+  module_defaults:
+    group/kubernetes.core.k8s:
+      host: "{{ ocp_cluster['host'] }}"
+      kubeconfig: "{{ ocp_cluster['kubeconfig'] }}"
+      validate_certs: "{{ ocp_cluster['validate_certs'] }}"
+
+  vars:
+    nfs_access_mode: ReadWriteOnce
+    volume_mode: Filesystem
+
+  tasks:
+
+    - name: Get StorageProfile
+      block:
+
+        - name: Retrieve current 'nfs-storage' profile
+          kubernetes.core.k8s_info:
+            api_version: cdi.kubevirt.io/v1beta1
+            kind: StorageProfile
+            name: nfs-storage
+            wait: false
+          register: current_nfs_profile
+
+        - name: Get current NFS profile '.spec'
+          ansible.builtin.set_fact:
+            current_nfs_profile_spec: "{{ current_nfs_profile['resources'][0]['spec'] }}"
+          when:
+            - current_nfs_profile['resources'] is defined
+            - current_nfs_profile['resources'] | length > 0
+
+        - name: Print current nfs-storage profile '.spec'
+          ansible.builtin.debug:
+            var: current_nfs_profile_spec
+
+        - name: Get current NFS profile access mode
+          ansible.builtin.set_fact:
+            current_nfs_profile_access_mode: "{{ current_nfs_profile['resources'][0]['status']['claimPropertySets'][0]['accessModes'][0] }}"
+          when:
+            - current_nfs_profile['resources'] is defined
+            - current_nfs_profile['resources'] | length > 0
+            - current_nfs_profile['resources'][0]['status']['claimPropertySets'] is defined
+
+        - name: Print current NFS profile access mode
+          ansible.builtin.debug:
+            var: current_nfs_profile_access_mode
+
+    - name: Patch StorageProfile
+      when:
+        - current_nfs_profile_access_mode != nfs_access_mode
+      block:
+
+        - name: Patch resource to update '.spec.claimPropertySets'
+          diff: true
+          kubernetes.core.k8s_json_patch:
+            kubeconfig: /home/lab/ocp4/auth/kubeconfig
+            wait: true
+            api_version: cdi.kubevirt.io/v1beta1
+            kind: StorageProfile
+            name: nfs-storage
+            patch:
+              - op: replace
+                path: /spec
+                value:
+                  claimPropertySets:
+                    - volumeMode: "{{ volume_mode }}"
+                      accessModes:
+                        - "{{ nfs_access_mode }}"
+
+    - name: Verify StorageProfile
+      block:
+
+        - name: Retrieve new 'nfs-storage' profile
+          kubernetes.core.k8s_info:
+            api_version: cdi.kubevirt.io/v1beta1
+            kind: StorageProfile
+            name: nfs-storage
+            wait: false
+          register: new_nfs_profile
+
+        - name: Print new nfs-storage profile '.spec'
+          ansible.builtin.debug:
+            var: new_nfs_profile['resources'][0]['spec']
+
+        - name: Print new nfs-storage profile '.status.claimPropertySets'
+          ansible.builtin.debug:
+            var: new_nfs_profile['resources'][0]['status']['claimPropertySets']

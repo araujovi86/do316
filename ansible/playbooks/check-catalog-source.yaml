@@ -1,0 +1,97 @@
+---
+- name: Check CatalogSource
+  hosts: utility
+  gather_facts: false
+
+  module_defaults:
+    group/kubernetes.core.k8s:
+      host: "{{ ocp_cluster['host'] }}"
+      kubeconfig: "{{ ocp_cluster['kubeconfig'] }}"
+      validate_certs: "{{ ocp_cluster['validate_certs'] }}"
+
+  vars:
+    target_namespace: openshift-marketplace
+    catalog_source_name: do316-catalog-cs
+    label_selector: "olm.catalogSource={{ catalog_source_name }}"
+
+  tasks:
+
+    - name: Check CatalogSource
+      block:
+
+        - name: Get CatalogSource "{{ catalog_source_name }}"
+          kubernetes.core.k8s_info:
+            api_version: operators.coreos.com/v1alpha1
+            kind: CatalogSource
+            name: "{{ catalog_source_name }}"
+            namespace: "{{ target_namespace }}"
+            wait: false
+          register: catalog_source_resource
+
+        - name: Verify CatalogSource pods
+          kubernetes.core.k8s_info:
+            api_version: v1
+            kind: Pod
+            namespace: "{{ target_namespace }}"
+            label_selectors: "{{ label_selector }}"
+            wait: false
+          register: catalog_source_pods
+          failed_when:
+            - catalog_source_pods['resources'][0] is not defined or
+              catalog_source_pods['resources'][0]['status']['phase'] != "Running" or
+              not catalog_source_pods['resources'][0]['status']['containerStatuses'][0]['started'] or
+              not catalog_source_pods['resources'][0]['status']['containerStatuses'][0]['ready']
+
+        - name: Print current CatalogSource pod info
+          ansible.builtin.debug:
+            var: pod_info
+          vars:
+            pod_info:
+              name: "{{ catalog_source_pods['resources'][0]['metadata']['name'] }}"
+              phase: "{{ catalog_source_pods['resources'][0]['status']['phase'] }}"
+              started: "{{ catalog_source_pods['resources'][0]['status']['containerStatuses'][0]['started'] }}"
+              ready: "{{ catalog_source_pods['resources'][0]['status']['containerStatuses'][0]['ready'] }}"
+
+      rescue:
+
+        - name: Replace CatalogSource pods if needed
+          kubernetes.core.k8s:
+            state: absent
+            api_version: v1
+            kind: Pod
+            namespace: "{{ target_namespace }}"
+            label_selectors: "{{ label_selector }}"
+          register: catalog_source_pods_replaced
+          when:
+            - catalog_source_pods['resources'][0]['status']['phase'] != "Running" or
+              not catalog_source_pods['resources'][0]['status']['containerStatuses'][0]['ready']
+
+        - name: Wait for new CatalogSource pods
+          kubernetes.core.k8s_info:
+            api_version: v1
+            kind: Pod
+            namespace: "{{ target_namespace }}"
+            label_selectors: "{{ label_selector }}"
+            wait: true
+            wait_condition:
+              type: Ready
+              status: true
+          register: catalog_source_pods_new
+          retries: "{{ retries_num }}"
+          delay: "{{ delay_num }}"
+          until:
+            - not catalog_source_pods_new['failed']
+          when:
+            - catalog_source_pods_replaced['changed']
+
+        - name: Print new CatalogSource pod info
+          ansible.builtin.debug:
+            var: pod_info
+          vars:
+            pod_info:
+              name: "{{ catalog_source_pods_new['resources'][0]['metadata']['name'] }}"
+              phase: "{{ catalog_source_pods_new['resources'][0]['status']['phase'] }}"
+              started: "{{ catalog_source_pods_new['resources'][0]['status']['containerStatuses'][0]['started'] }}"
+              ready: "{{ catalog_source_pods_new['resources'][0]['status']['containerStatuses'][0]['ready'] }}"
+          when:
+            - catalog_source_pods_replaced['changed']

@@ -1,0 +1,101 @@
+---
+- name: Disable ens4 on worker nodes
+  hosts: utility
+  gather_facts: false
+
+  module_defaults:
+    group/kubernetes.core.k8s:
+      host: "{{ ocp_cluster['host'] }}"
+      kubeconfig: "{{ ocp_cluster['kubeconfig'] }}"
+      validate_certs: "{{ ocp_cluster['validate_certs'] }}"
+
+  tasks:
+
+    # FIXME: Convert to 'kubernetes.core.k8s'
+    - name: Determine if a NNCP exists in cluster
+      ansible.builtin.command:
+        cmd: oc get nncp
+      register: nncp
+      ignore_errors: true
+
+    - name: Disable ens4 on worker nodes
+      when:
+        - nncp.rc == 0
+      block:
+
+        # FIXME: Convert to 'kubernetes.core.k8s'
+        - name: Delete 'disable-ens4-policy', if found
+          ansible.builtin.command:
+            cmd: oc delete nncp disable-ens4-policy --ignore-not-found --wait
+          when:
+            - '"REASON\ndisable-ens4-policy" in nncp.stdout'
+          ignore_errors: true
+
+        # FIXME: Convert to 'kubernetes.core.k8s'
+        - name: Retrieve node labels
+          ansible.builtin.shell:
+            cmd: oc get nodes {worker01,worker02} --show-labels | grep external
+          register: node_labels
+          ignore_errors: true
+
+        # FIXME: Convert to 'kubernetes.core.k8s'
+        - name: Apply temporary label to nodes
+          ansible.builtin.shell:
+            cmd: "oc label nodes {worker01,worker02} external-network=true --overwrite"
+          when:
+            - '"external-network" not in node_labels.stdout'
+          ignore_errors: true
+
+        - name: Ensure that 'ens4' is not configured on nodes
+          kubernetes.core.k8s:
+            state: present
+            wait: true
+            wait_condition:
+              type: Available
+              status: "True"
+              reason: SuccessfullyConfigured
+            inline:
+              apiVersion: nmstate.io/v1
+              kind: NodeNetworkConfigurationPolicy
+              metadata:
+                name: disable-ens4-policy
+              spec:
+                nodeSelector:
+                  external-network: "true"
+                desiredState:
+                  interfaces:
+                    - name: ens4
+                      type: ethernet
+                      state: down
+                      mtu: 1500
+                      ipv4:
+                        address: []
+                        enabled: false
+                      ipv6:
+                        address: []
+                        enabled: false
+                      lldp:
+                        enabled: false
+
+        # FIXME: Convert to 'kubernetes.core.k8s'
+        - name: Retrieve updated list of NNCPs in cluster
+          ansible.builtin.command:
+            cmd: oc get nncp
+          register: nncp_new
+          ignore_errors: true
+
+        # FIXME: Convert to 'kubernetes.core.k8s'
+        - name: Remove temporary node labels
+          ansible.builtin.shell:
+            cmd: oc label nodes {worker01,worker02} external-network-
+          when:
+            - '"REASON\ndisable-ens4-policy" in nncp_new.stdout'
+          ignore_errors: true
+
+        # FIXME: Convert to 'kubernetes.core.k8s'
+        - name: Delete 'disable-ens4-policy' resource
+          ansible.builtin.command:
+            cmd: oc delete nncp disable-ens4-policy --ignore-not-found --wait
+          when:
+            - '"REASON\ndisable-ens4-policy" in nncp_new.stdout'
+          ignore_errors: true

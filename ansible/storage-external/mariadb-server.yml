@@ -1,0 +1,124 @@
+---
+- name: Create the mariadb-server virtual machine
+  hosts: utility
+  gather_facts: false
+  module_defaults:
+    group/kubernetes.core.k8s:
+      host: "{{ ocp_cluster['host'] }}"
+      kubeconfig: "{{ ocp_cluster['kubeconfig'] }}"
+      validate_certs: "{{ ocp_cluster['validate_certs'] }}"
+  vars:
+    vm_namespace: storage-external
+    vm_name: mariadb-server
+    vm_app: mariadb-server
+    vm_qcow2: mariadb-server.qcow2
+    vm_size: 10Gi
+
+  tasks:
+    - name: "Ensure the project exist: {{ vm_namespace }}"
+      kubernetes.core.k8s:
+        state: present
+        inline:
+          apiVersion: project.openshift.io/v1
+          kind: Project
+          metadata:
+            name: "{{ vm_namespace }}"
+
+    - name: Ensure the VM and the data volume exist
+      kubernetes.core.k8s:
+        state: present
+        namespace: "{{ vm_namespace }}"
+        wait: true
+        wait_condition:
+          type: Ready
+          status: "True"
+        wait_sleep: "{{ wait_sleep }}"
+        wait_timeout: "{{ wait_timeout }}"
+        inline:
+          apiVersion: kubevirt.io/v1
+          kind: VirtualMachine
+          metadata:
+            name: "{{ vm_name }}"
+            namespace: "{{ vm_namespace }}"
+            labels:
+              app: "{{ vm_app }}"
+              kubevirt.io/vm: "{{ vm_name }}"
+              flavor.template.kubevirt.io/small: 'true'
+              os.template.kubevirt.io/rhel8.4: 'true'
+              vm.kubevirt.io/template: rhel8-server-small
+              vm.kubevirt.io/template.namespace: openshift
+              vm.kubevirt.io/template.revision: '1'
+              vm.kubevirt.io/template.version: v0.26.2
+              workload.template.kubevirt.io/server: 'true'
+          spec:
+            dataVolumeTemplates:
+              - apiVersion: cdi.kubevirt.io/v1beta1
+                kind: DataVolume
+                metadata:
+                  name: "{{ vm_name }}"
+                spec:
+                  pvc:
+                    accessModes:
+                      - ReadWriteMany
+                    resources:
+                      requests:
+                        storage: "{{ vm_size }}"
+                    storageClassName: "{{ vm_sc_name }}"
+                    volumeMode: "{{ vm_sc_mode }}"
+                  source:
+                    http:
+                      url: "{{ utility_url }}{{ vm_qcow2 }}"
+            runStrategy: RerunOnFailure
+            template:
+              metadata:
+                labels:
+                  flavor.template.kubevirt.io/small: 'true'
+                  kubevirt.io/domain: "{{ vm_name }}"
+                  kubevirt.io/size: small
+                  os.template.kubevirt.io/rhel8.4: 'true'
+                  workload.template.kubevirt.io/server: 'true'
+              spec:
+                domain:
+                  cpu:
+                    cores: 1
+                    sockets: 1
+                    threads: 1
+                  devices:
+                    disks:
+                      - name: "{{ vm_name }}"
+                        bootOrder: 1
+                        disk:
+                          bus: virtio
+                      - name: cloudinitdisk
+                        disk:
+                          bus: virtio
+                    interfaces:
+                      - name: default
+                        model: virtio
+                        masquerade: {}
+                    networkInterfaceMultiqueue: true
+                    rng: {}
+                  machine:
+                    type: pc-q35-rhel8.4.0
+                  resources:
+                    requests:
+                      memory: 2Gi
+                evictionStrategy: LiveMigrate
+                hostname: "{{ vm_name }}"
+                networks:
+                  - name: default
+                    pod: {}
+                terminationGracePeriodSeconds: 180
+                volumes:
+                  - name: "{{ vm_name }}"
+                    dataVolume:
+                      name: "{{ vm_name }}"
+                  - name: cloudinitdisk
+                    cloudInitNoCloud:
+                      userData: |-
+                        #cloud-config
+                        user: developer
+                        password: developer
+                        chpasswd: { expire: False }
+                        ssh_authorized_keys:
+                          - {{ lab_rsa }}

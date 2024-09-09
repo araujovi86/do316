@@ -1,0 +1,47 @@
+---
+# NOTE: Replace 'labtools.copy_lab_files' with this playbook when making the full Ansible migration
+
+- name: Add exercise directories
+  hosts: localhost
+  gather_facts: false
+
+  vars:
+    base_dir: /home/student/{{ sku | upper }}
+    exercises:
+      network_external:
+        name: network-external
+        dirs:
+          - labs
+          - solutions
+      multihomed_nmstate:
+        name: multihomed-nmstate
+        dirs:
+          - labs
+          - solutions
+
+  tasks:
+    - name: Fail if exercise is undefined
+      ansible.builtin.fail:
+        msg: The "exercise" variable must be defined.
+      when:
+        - exercise is not defined
+
+    - name: Ensure course directory exists
+      ansible.builtin.file:
+        path: "{{ base_dir }}"
+        state: directory
+        owner: student
+        group: student
+        mode: '0775'
+
+    - name: Create content
+      ansible.builtin.copy:
+        src: "../{{ exercise['name'] }}/{{ item }}/"
+        dest: "{{ base_dir }}/{{ item }}/{{ exercise['name'] }}/"
+        owner: student
+        group: student
+        mode: preserve
+        directory_mode: '0775'
+      loop: "{{ exercise['dirs'] }}"
+      loop_control:
+        label: Creating content at "{{ base_dir }}/{{ item }}/{{ exercise['name'] }}"

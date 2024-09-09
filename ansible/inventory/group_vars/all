@@ -1,0 +1,244 @@
+---
+#	group_vars/all
+
+sku: DO316
+
+ocp_cluster:
+  host: "https://api.ocp4.example.com:6443"
+  kubeconfig: /home/lab/ocp4/auth/kubeconfig
+  validate_certs: False
+  users:
+    - username: admin
+      password: redhatocp
+      cluster_role: cluster-admin
+    - username: developer
+      password: developer
+    - username: dbadmin1
+      password: redhatocp
+    - username: dbadmin1
+      password: redhatocp
+
+user_kubeconfig:
+  file: /home/lab/.kube/config
+  remote: true
+
+control_nodes:
+  - master01
+  - master02
+  - master03
+
+worker_nodes:
+  - worker01
+  - worker02
+
+# Default values for 'wait' and 'retry'
+retries_num: 30
+delay_num: 10
+wait_sleep: 5
+wait_timeout: 360
+
+# defaults file for 'ocp-control-plane-certs'
+ca_cert_file: /etc/pki/tls/certs/classroom-ca.pem
+ca_private_key: /etc/pki/tls/private/classroom-ca-key.pem
+cert_path: /tmp/certs
+organization_name: Red Hat, Inc.
+organizational_unit_name: Training
+locality_name: Raleigh
+state_or_province_name: NC
+country_name: US
+# Replace with your wildcard_domain. This can be found with:
+# oc get ingresses.config.openshift.io/cluster -o jsonpath='{.spec.domain}'
+wildcard_domain: apps.ocp4.example.com
+configure_api: true
+cert_name: wildcard
+combined_name: wildcard-combined
+cert_comment: "Classroom {% if configure_api | bool == True %}Wildcard & API{% else %}Wildcard{% endif %} Certificate"
+default_user: student
+not_after: "+3650d"
+update_cert: false
+
+# SSH authorized key
+# 2048 SHA256:M8ikhcEDm2tQ95Z0o7ZvufqEixCFCt+wowZLNzNlBT0 LabGradingKey (RSA)
+ssh_key_file: "lab_rsa.pub"
+lab_rsa: "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQDGtUW3ismHyuCW4CDdTVOOOq6aySdtYenXFWWx7HJa4VTepkG00aaLId9ocra10hc+MB0GTJMCyabDv3i8NKdi6GDH/aOLVsp/Ewy8DEzZMBlJDCt4v2i4/wU4liw6KgEFkZs+5hnqU8d4QzldyGJ5onr+AGvFOKG68CS0BBl40Z1twf1HhCyx8k6nzD2ovlkxWRFZKPAFrtPCBVvQDkOfVFZF+lwzaSztgAjbFZ4A9jqQyUYx4kOJ5DtRef36ucdUdVQale0+8lICl7/gb142SPpYfhxe88/BJScLPRjvVNeu1TxRmoHtVazqnAoRxQYAn2MoI6AG+w6QuZf8f7aL LabGradingKey"
+
+utility_url: http://utility.lab.example.com:8080/openshift4/images/
+vm_sc_name: ocs-external-storagecluster-ceph-rbd-virtualization
+vm_sc_mode: Block
+vm_access_mode: ReadWriteMany
+dv_sc_name: ocs-external-storagecluster-ceph-rbd-virtualization
+dv_sc_mode: Block
+
+operators:
+
+  virt:
+    id: virt
+    label_selector: operators.coreos.com/kubevirt-hyperconverged.openshift-cnv
+    resource_files:
+      # - openshift-virt.yaml
+      - virt/project.yaml
+      - virt/namespace.yaml
+      - virt/operatorgroup.yaml
+      - virt/subscription.yaml
+    extra_resource_files:
+      - virt/openshift-virt-hyperconverged.yaml
+    custom_resource_definitions:
+      - networkaddonsconfigs.networkaddonsoperator.network.kubevirt.io
+      - kubevirts.kubevirt.io
+      - ssps.ssp.kubevirt.io
+      - cdis.cdi.kubevirt.io
+      - hostpathprovisioners.hostpathprovisioner.kubevirt.io
+      - mtqs.mtq.kubevirt.io
+      - hyperconvergeds.hco.kubevirt.io
+    version: 'v4.14.1'
+    name: kubevirt-hyperconverged
+    project:
+      api_version: project.openshift.io/v1
+      name: openshift-cnv
+    namespace:
+      api_version: v1
+      name: openshift-cnv
+    operator_group:
+      api_version: operators.coreos.com/v1
+      name: kubevirt-hyperconverged-group
+    subscription:
+      api_version: operators.coreos.com/v1alpha1
+      name: kubevirt-hyperconverged
+      channel: stable
+      # source: redhat-operators
+      source: do316-catalog-cs
+      source_namespace: openshift-marketplace
+      starting_csv: kubevirt-hyperconverged-operator.v4.14.1
+    cluster_service_version:
+      api_version: operators.coreos.com/v1alpha1
+    hyperconverged:
+      api_version: hco.kubevirt.io/v1beta1
+      name: kubevirt-hyperconverged
+
+  mtv:
+    id: mtv
+    label_selector: operators.coreos.com/mtv-operator.openshift-mtv
+    resource_files:
+      # - openshift-mtv.yaml
+      - mtv/project.yaml
+      - mtv/namespace.yaml
+      - mtv/operatorgroup.yaml
+      - mtv/subscription.yaml
+    extra_resource_files:
+      - mtv/openshift-mtv-forklift.yaml
+    custom_resource_definitions:
+      - hooks.forklift.konveyor.io
+      - hosts.forklift.konveyor.io
+      - migrations.forklift.konveyor.io
+      - networkmaps.forklift.konveyor.io
+      - openstackvolumepopulators.forklift.konveyor.io
+      - ovirtvolumepopulators.forklift.konveyor.io
+      - plans.forklift.konveyor.io
+      - providers.forklift.konveyor.io
+      - storagemaps.forklift.konveyor.io
+      - forkliftcontrollers.forklift.konveyor.io
+    # version: 'v2.5.6'
+    version: 'v2.5.7'
+    name: mtv-operator
+    project:
+      api_version: project.openshift.io/v1
+      name: openshift-mtv
+    namespace:
+      api_version: v1
+      name: openshift-mtv
+    operator_group:
+      api_version: operators.coreos.com/v1
+      name: migration
+      target_namespaces:
+        - openshift-mtv
+    subscription:
+      api_version: operators.coreos.com/v1alpha1
+      name: mtv-operator
+      channel: release-v2.5
+      # source: redhat-operators
+      source: do316-catalog-cs
+      source_namespace: openshift-marketplace
+      # starting_csv: mtv-operator.v2.5.6
+      starting_csv: mtv-operator.v2.5.7
+    cluster_service_version:
+      api_version: operators.coreos.com/v1alpha1
+    forkliftcontroller:
+      api_version: forklift.konveyor.io/v1beta1
+      name: forklift-controller
+
+  nmo:
+    id: nmo
+    label_selector: operators.coreos.com/node-maintenance-operator.openshift-workload-availability
+    resource_files:
+      # - openshift-nmo.yaml
+      - nmo/project.yaml
+      - nmo/namespace.yaml
+      - nmo/operatorgroup.yaml
+      - nmo/subscription.yaml
+    extra_resource_files: []
+    custom_resource_definitions:
+      - nodemaintenances.nodemaintenance.medik8s.io
+    version: 'v5.3.0'
+    name: node-maintenance-operator
+    project:
+      api_version: project.openshift.io/v1
+      name: openshift-workload-availability
+    namespace:
+      api_version: v1
+      name: openshift-workload-availability
+    operator_group:
+      api_version: operators.coreos.com/v1
+      name: openshift-workload-availability
+    subscription:
+      api_version: operators.coreos.com/v1alpha1
+      name: node-maintenance-operator
+      channel: stable
+      install_plan_approval: Automatic
+      # source: redhat-operators
+      source: do316-catalog-cs
+      source_namespace: openshift-marketplace
+      starting_csv: node-maintenance-operator.v5.3.0
+    cluster_service_version:
+      api_version: operators.coreos.com/v1alpha1
+
+  nmstate:
+    id: nmstate
+    label_selector: operators.coreos.com/kubernetes-nmstate-operator.openshift-nmstate
+    resource_files:
+      # - openshift-nmstate.yaml
+      - nmstate/project.yaml
+      - nmstate/namespace.yaml
+      - nmstate/operatorgroup.yaml
+      - nmstate/subscription.yaml
+    extra_resource_files:
+      - nmstate/openshift-nmstate-nmstate.yaml
+    custom_resource_definitions:
+      - nmstates.nmstate.io
+      - nodenetworkconfigurationenactments.nmstate.io
+      - nodenetworkconfigurationpolicies.nmstate.io
+      - nodenetworkstates.nmstate.io
+    version: '4.14.0-202401081210'
+    name: openshift-nmstate
+    project:
+      api_version: project.openshift.io/v1
+      name: openshift-nmstate
+    namespace:
+      api_version: v1
+      name: openshift-nmstate
+    operator_group:
+      api_version: operators.coreos.com/v1
+      name: openshift-nmstate
+    subscription:
+      api_version: operators.coreos.com/v1alpha1
+      name: kubernetes-nmstate-operator
+      channel: stable
+      install_plan_approval: Automatic
+      # source: redhat-operators
+      source: do316-catalog-cs
+      source_namespace: openshift-marketplace
+      starting_csv: kubernetes-nmstate-operator.4.14.0-202401081210
+    cluster_service_version:
+      api_version: operators.coreos.com/v1alpha1
+    nmstate:
+      api_version: nmstate.io/v1
+      name: nmstate

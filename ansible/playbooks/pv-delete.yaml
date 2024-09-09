@@ -1,0 +1,27 @@
+---
+- name: Delete PersistentVolume
+  hosts: utility
+  gather_facts: false
+
+  module_defaults:
+    group/kubernetes.core.k8s:
+      host: "{{ ocp_cluster['host'] }}"
+      kubeconfig: "{{ ocp_cluster['kubeconfig'] }}"
+      validate_certs: "{{ ocp_cluster['validate_certs'] }}"
+      wait: true
+      wait_sleep: "{{ wait_sleep }}"
+      wait_timeout: "{{ wait_timeout }}"
+
+  # NOTE: override this variable when calling the playbook
+  vars:
+    pv_name: my-pv
+
+  roles:
+
+    - role: resource-delete
+      vars:
+        resource:
+          apiVersion: v1
+          kind: PersistentVolume
+          metadata:
+            name: "{{ pv_name }}"

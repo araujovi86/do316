@@ -1,0 +1,237 @@
+---
+# NOTE: This playbook requires that the following playbooks run BEFORE via the lab script
+# - playbooks/deploy-virtctl.yml
+
+- name: Create VMs and DataVolumes
+  hosts: utility
+  gather_facts: false
+
+  module_defaults:
+    group/kubernetes.core.k8s:
+      host: "{{ ocp_cluster['host'] }}"
+      kubeconfig: "{{ ocp_cluster['kubeconfig'] }}"
+      validate_certs: "{{ ocp_cluster['validate_certs'] }}"
+    group/community.okd.okd:
+      host: "{{ ocp_cluster['host'] }}"
+      validate_certs: "{{ ocp_cluster['validate_certs'] }}"
+
+  vars:
+
+    vm_qcow2: mariadb-server.qcow2
+    dv_name: mariadb-server
+    dv_namespace: vm-images
+    vm_size: 10Gi
+    vm_namespace: "{{ virtual_machines | map(attribute='vm_namespace') }}"
+    virtual_machines:
+      - vm_name: developers-mariadb
+        vm_namespace: developers-vms
+        vm_app: developersdb
+        vm_command: stress -c 2 -d 6 -i 2 -m 4 --vm-bytes 256M -t 120s
+      - vm_name: testing-mariadb
+        vm_namespace: testing-vms
+        vm_app: testingdb
+        vm_command: stress -c 6 -d 4 -i 8 -m 1 --vm-bytes 1G -t 120s
+      - vm_name: production-mariadb
+        vm_namespace: production-vms
+        vm_app: productiondb
+        vm_command: stress -c 8 -d 2 -i 6 -m 1 --vm-bytes 1G -t 120s
+
+  tasks:
+
+    - name: "Create project {{ item }}"
+      kubernetes.core.k8s:
+        state: present
+        inline:
+          apiVersion: project.openshift.io/v1
+          kind: Project
+          metadata:
+            name: "{{ item }}"
+      loop: "{{ [dv_namespace, vm_namespace] | flatten }}"
+
+    # - name: Create ClusterRole, ClusterRoleBinding, RoleBinding
+    #   ansible.builtin.include_tasks: role-tasks.yml
+
+    - name: Create RBAC to allow VNC console access
+      kubernetes.core.k8s:
+        state: present
+        definition: "{{ item }}"
+      register: rbac_vnc
+      loop_control:
+        label: "{{ item.kind }} / {{ item.metadata.name }}"
+      loop: "{{ lookup('ansible.builtin.file', 'rbac-allow-vnc.yaml') | from_yaml_all }}"
+
+    - name: Create RBAC to allow DataVolume clone
+      kubernetes.core.k8s:
+        state: present
+        definition: "{{ item }}"
+      register: rbac_clone
+      loop_control:
+        label: "{{ item.kind }} / {{ item.metadata.name }}"
+      loop: "{{ lookup('ansible.builtin.file', 'rbac-allow-clone.yaml') | from_yaml_all }}"
+
+    # - name: Test log in to the cluster
+    #   ansible.builtin.include_tasks: login-users.yml
+
+    # Log in as the developer user so that the account appears available to the student
+    - name: OpenShift user login
+      community.okd.openshift_auth:
+        username: "{{ item['user'] }}"
+        password: "{{ item['pass'] }}"
+      register: openshift_auth_user
+      # ignore_errors: true
+      failed_when: false
+      loop:
+        - user: developer
+          pass: developer
+
+    # Log in as the admin user to correct the kubeconfig context for the remaining GE tasks
+    - name: OpenShift admin login
+      community.okd.openshift_auth:
+        username: "{{ item['user'] }}"
+        password: "{{ item['pass'] }}"
+      register: openshift_auth_admin
+      ignore_errors: false
+      loop:
+        - user: admin
+          pass: redhatocp
+
+    - name: Create DV for VMs
+      kubernetes.core.k8s:
+        state: present
+        inline:
+          apiVersion: cdi.kubevirt.io/v1beta1
+          kind: DataVolume
+          metadata:
+            name: "{{ dv_name }}"
+            namespace: "{{ dv_namespace }}"
+          spec:
+            source:
+              http:
+                url: "{{ utility_url }}{{ vm_qcow2 }}"
+            pvc:
+              accessModes:
+                - "{{ vm_access_mode }}"
+              volumeMode: "{{ vm_sc_mode }}"
+              resources:
+                requests:
+                  storage: "{{ vm_size }}"
+              storageClassName: "{{ vm_sc_name }}"
+
+    - name: Create VMs and DVs
+      vars:
+        vm_name: "{{ item['vm_name'] }}"
+        vm_namespace: "{{ item['vm_namespace'] }}"
+        vm_app: "{{ item['vm_app'] }}"
+        vm_command: "{{ item['vm_command'] }}"
+      loop: "{{ virtual_machines }}"
+      kubernetes.core.k8s:
+        state: present
+        namespace: "{{ vm_namespace }}"
+        wait: true
+        wait_condition:
+          type: Ready
+          status: "True"
+        wait_sleep: "{{ wait_sleep }}"
+        wait_timeout: "{{ wait_timeout }}"
+        inline:
+          apiVersion: kubevirt.io/v1
+          kind: VirtualMachine
+          metadata:
+            name: "{{ vm_name }}"
+            namespace: "{{ vm_namespace }}"
+            labels:
+              app: "{{ vm_app }}"
+              kubevirt.io/vm: "{{ vm_name }}"
+              flavor.template.kubevirt.io/small: 'true'
+              os.template.kubevirt.io/rhel8.4: 'true'
+              vm.kubevirt.io/template: rhel8-server-small
+              vm.kubevirt.io/template.namespace: openshift
+              vm.kubevirt.io/template.revision: '1'
+              vm.kubevirt.io/template.version: v0.26.2
+              workload.template.kubevirt.io/server: 'true'
+          spec:
+            dataVolumeTemplates:
+              - apiVersion: cdi.kubevirt.io/v1beta1
+                kind: DataVolume
+                metadata:
+                  name: "{{ vm_name }}"
+                spec:
+                  pvc:
+                    accessModes:
+                      - "{{ vm_access_mode }}"
+                    resources:
+                      requests:
+                        storage: "{{ vm_size }}"
+                    storageClassName: "{{ vm_sc_name }}"
+                    volumeMode: "{{ vm_sc_mode }}"
+                  source:
+                    pvc:
+                      namespace: "{{ dv_namespace }}"
+                      name: "{{ dv_name }}"
+            runStrategy: RerunOnFailure
+            template:
+              metadata:
+                labels:
+                  app: "{{ vm_app }}"
+                  flavor.template.kubevirt.io/small: 'true'
+                  kubevirt.io/domain: "{{ vm_name }}"
+                  kubevirt.io/size: small
+                  os.template.kubevirt.io/rhel8.4: 'true'
+                  workload.template.kubevirt.io/server: 'true'
+              spec:
+                domain:
+                  cpu:
+                    cores: 1
+                    sockets: 1
+                    threads: 1
+                  devices:
+                    disks:
+                      - name: "{{ vm_name }}"
+                        bootOrder: 1
+                        disk:
+                          bus: virtio
+                      - name: cloudinitdisk
+                        disk:
+                          bus: virtio
+                    interfaces:
+                      - name: default
+                        model: virtio
+                        masquerade: {}
+                    networkInterfaceMultiqueue: true
+                    rng: {}
+                  machine:
+                    type: pc-q35-rhel8.4.0
+                  resources:
+                    requests:
+                      memory: 2Gi
+                evictionStrategy: LiveMigrate
+                hostname: "{{ vm_name }}"
+                networks:
+                  - name: default
+                    pod: {}
+                terminationGracePeriodSeconds: 180
+                volumes:
+                  - name: "{{ vm_name }}"
+                    dataVolume:
+                      name: "{{ vm_name }}"
+                  - name: cloudinitdisk
+                    cloudInitNoCloud:
+                      userData: |-
+                        #cloud-config
+                        user: developer
+                        password: developer
+                        chpasswd: { expire: False }
+                        ssh_authorized_keys:
+                          - {{ lab_rsa }}
+                        swap:
+                          filename: /swap
+                          size: "auto"
+                          maxsize: 2000000
+                        write_files:
+                          - path: /home/developer/stress-load.sh
+                            permissions: '0750'
+                            owner: developer:developer
+                            defer: true
+                            content: |
+                              #!/bin/bash
+                              {{ vm_command }}

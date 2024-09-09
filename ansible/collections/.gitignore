@@ -1,0 +1,3 @@
+# Ignore the 'ansible_collections' folder that is produced when
+# the lab package is created with the Makefile
+ansible_collections

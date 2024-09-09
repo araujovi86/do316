@@ -1,0 +1,51 @@
+---
+- name: Download virtctl and virt-viewer
+  hosts: localhost
+  gather_facts: false
+  vars:
+    virt_url: https://hyperconverged-cluster-cli-download-openshift-cnv.apps.ocp4.example.com/amd64/linux/virtctl.tar.gz
+    virt_path: /usr/local/bin/
+    virt_tar: virtctl.tar.gz
+    virt_file: virtctl
+  tasks:
+    - name: Check if virtctl is in virt_path
+      ansible.builtin.stat:
+        path: "{{ virt_path }}{{ virt_file }}"
+      register: virt_status
+      ignore_errors: true
+
+    - name: Download virtctl if it doesn't exist on workstation
+      become: true
+      ansible.builtin.get_url:
+        url: "{{ virt_url }}"
+        dest: "{{ virt_path }}"
+        mode: '0755'
+        owner: root
+        group: root
+      when:
+        # - virt_status.stat.exists == false
+        - not virt_status.stat.exists
+      ignore_errors: true
+
+    - name: Extract virtctl if it doesn't exist
+      become: true
+      ansible.builtin.unarchive:
+        src: "{{ virt_path }}{{ virt_tar }}"
+        dest: "{{ virt_path }}"
+        remote_src: true
+        creates: "{{ virt_path }}{{ virt_file }}"
+        mode: +x
+      register: virtctl_install
+      when:
+        # - virt_status.stat.exists == false
+        - not virt_status.stat.exists
+      ignore_errors: true
+
+    - name: Remove {{ virt_tar }}
+      ansible.builtin.file:
+        path: "{{ virt_path }}{{ virt_tar }}"
+        state: absent
+      ignore_errors: true
+      when:
+        # - virtctl_install == true
+        - virtctl_install

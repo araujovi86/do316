@@ -1,0 +1,34 @@
+---
+- name: Create the review-cr2 namespace
+  hosts: utility
+  gather_facts: false
+
+  module_defaults:
+    group/kubernetes.core.k8s:
+      host: "{{ ocp_cluster['host'] }}"
+      kubeconfig: "{{ ocp_cluster['kubeconfig'] }}"
+      validate_certs: "{{ ocp_cluster['validate_certs'] }}"
+
+  tasks:
+
+    - name: "Ensure that the project exists: {{ item }}"
+      kubernetes.core.k8s:
+        state: present
+        inline:
+          apiVersion: project.openshift.io/v1
+          kind: Project
+          metadata:
+            name: "{{ item }}"
+      loop:
+        - review-cr2
+
+    - name: Add developer user to vm-admins group
+      kubernetes.core.k8s:
+        state: present
+        inline:
+          apiVersion: user.openshift.io/v1
+          kind: Group
+          metadata:
+            name: vm-admins
+          users:
+            - developer

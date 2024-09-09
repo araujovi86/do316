@@ -1,0 +1,173 @@
+---
+- name: Verify worker node settings for lab review
+  hosts: utility
+  gather_facts: false
+
+  module_defaults:
+    group/kubernetes.core.k8s:
+      host: "{{ ocp_cluster['host'] }}"
+      kubeconfig: "{{ ocp_cluster['kubeconfig'] }}"
+      validate_certs: "{{ ocp_cluster['validate_certs'] }}"
+
+  tasks:
+
+    - name: NNCP
+      block:
+
+        # # FIXME: Convert to 'kubernetes.core.k8s'
+        # - name: Determine if a NNCP exists in cluster
+        #   ansible.builtin.command:
+        #     cmd: oc get nncp
+        #   register: nncp
+        #   ignore_errors: true
+
+        # # FIXME: Convert to 'kubernetes.core.k8s'
+        # - name: Delete 'br0-ens4-policy'
+        #   ansible.builtin.command:
+        #     cmd: oc delete nncp br0-ens4-policy --ignore-not-found --wait
+        #   ignore_errors: true
+        #   when:
+        #     - '"REASON\nbr0-ens4-policy" in nncp.stdout'
+
+        # # FIXME: Convert to 'kubernetes.core.k8s'
+        # - name: Delete 'remove-br0-ens4-policy'
+        #   ansible.builtin.command:
+        #     cmd: oc delete nncp remove-br0-ens4-policy --ignore-not-found --wait
+        #   ignore_errors: true
+        #   when:
+        #     - '"REASON\nremove-br0-ens4-policy" in nncp.stdout'
+
+        # NOTE:
+        # This check was implemented to delete the NNCP only if the NMState
+        # operator is installed, otherwise the cluster will not recognize
+        # the resource kind.
+        #
+        # - Failed to find exact match for nmstate.io/v1.NodeNetworkConfigurationPolicy
+        #   by [kind, name, singularName, shortNames]
+        #
+        # Another way to overcome this is by setting ignore_errors on the
+        # delete task, but this is more clean.
+
+        - name: "Check if namespace exists: '{{ nmstate_namespace }}'"
+          kubernetes.core.k8s_info:
+            api_version: v1
+            kind: namespace
+            name: "{{ nmstate_namespace }}"
+          vars:
+            nmstate_namespace: openshift-workload-availability
+          register: nmstate_ns
+
+        - name: Delete NNCP if exists
+          kubernetes.core.k8s:
+            state: absent
+            api_version: nmstate.io/v1
+            kind: NodeNetworkConfigurationPolicy
+            name: "{{ item }}"
+            wait: true
+          loop:
+            - br0-ens4-policy
+            - remove-br0-ens4-policy
+          when:
+            - nmstate_ns['resources'] is defined
+            - nmstate_ns['resources'] | length < 0
+
+    # FIXME: Convert to 'kubernetes.core.k8s'
+    - name: Check if 'br0' exists in 'worker01' and 'worker02' network settings
+      ansible.builtin.shell:
+        cmd: oc describe nns {worker01,worker02} | grep br0
+      register: nns_worker
+      ignore_errors: true
+
+    # FIXME: Convert to 'kubernetes.core.k8s'
+    - name: Retrieve node labels
+      ansible.builtin.shell:
+        cmd: oc get nodes {worker01,worker02} --show-labels | grep external
+      register: node_labels
+      ignore_errors: true
+
+    # FIXME: Convert to 'kubernetes.core.k8s'
+    - name: Apply temporary label to nodes
+      ansible.builtin.shell:
+        cmd: oc label nodes {worker01,worker02} external-network=true --overwrite
+      ignore_errors: true
+      when:
+        - '"external-network" not in node_labels.stdout'
+        - '"br0" in nns_worker.stdout'
+
+    - name: Ensure that the bridge is not configured on nodes
+      when:
+        - '"br0" in nns_worker.stdout'
+      kubernetes.core.k8s:
+        state: present
+        wait: true
+        wait_condition:
+          type: Available
+          status: "True"
+          reason: SuccessfullyConfigured
+        inline:
+          apiVersion: nmstate.io/v1
+          kind: NodeNetworkConfigurationPolicy
+          metadata:
+            name: remove-br0-ens4-policy
+          spec:
+            nodeSelector:
+              external-network: "true"
+            desiredState:
+              interfaces:
+                - name: br0
+                  description: Linux bridge with ens4 as a port
+                  type: linux-bridge
+                  state: absent
+                  ipv4:
+                    dhcp: true
+                    enabled: true
+                  bridge:
+                    options:
+                      stp:
+                        enabled: false
+                      port:
+                        - name: ens4
+                - name: ens4
+                  type: ethernet
+                  state: up
+                  mtu: 1500
+                  ipv4:
+                    auto-dns: true
+                    auto-gateway: true
+                    auto-route-table-id: 0
+                    auto-routes: true
+                    dhcp: true
+                    enabled: true
+                  ipv6:
+                    auto-dns: true
+                    auto-gateway: true
+                    auto-route-table-id: 0
+                    auto-routes: true
+                    autoconf: true
+                    dhcp: true
+                    enabled: true
+                  lldp:
+                    enabled: false
+
+    # FIXME: Convert to 'kubernetes.core.k8s'
+    - name: Retrieve updated list of NNCPs in cluster
+      ansible.builtin.command:
+        cmd: oc get nncp
+      register: nncp_new
+      ignore_errors: true
+
+    # FIXME: Convert to 'kubernetes.core.k8s'
+    - name: Remove temporary node labels
+      ansible.builtin.shell:
+        cmd: oc label nodes {worker01,worker02} external-network-
+      ignore_errors: true
+      when:
+        - '"REASON\nremove-br0-ens4-policy" in nncp_new.stdout'
+
+    # FIXME: Convert to 'kubernetes.core.k8s'
+    - name: Delete 'remove-br0-ens4' policy
+      ansible.builtin.command:
+        cmd: oc delete nncp remove-br0-ens4-policy --ignore-not-found --wait
+      ignore_errors: true
+      when:
+        - '"REASON\nremove-br0-ens4-policy" in nncp_new.stdout'
